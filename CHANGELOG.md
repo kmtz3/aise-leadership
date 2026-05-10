@@ -1,5 +1,10 @@
 # Changelog — aise-leadership
 
+## [1.0.1] — 2026-05-10
+
+### Fixed
+- Set executable bit on `scripts/session-start.sh` and `scripts/sync-context.sh`
+
 ## [1.0.0] — 2026-05-10
 
 ### Added
