@@ -7,7 +7,7 @@ Set up the assistant for the current user.
 
 Read the procedure in `agents/assistant-onboarding.md` and execute it inline as the main assistant — do not try to spawn `assistant-onboarding` as a subagent (custom agents in this plugin are procedure documents, not registered subagent types). The steps:
 
-0. **Run the connection check first.** Before anything else, run `./scripts/setup-connections.sh --check` via `mcp__Control_your_Mac__osascript` (file and bash tools are sandboxed in Cowork and cannot reach the plugin directory). Surface the full output in chat. If `sf-mcp-server` is missing, tell the user to install it. Do not skip this step.
+0. **Run the connection check first.** Before anything else, run `./scripts/setup-connections.sh --check` via `mcp__Control_your_Mac__osascript` (file and bash tools are sandboxed in Cowork and cannot reach the plugin directory). Surface the full output in chat. If the Salesforce CLI (`sf`) is missing, tell the user to install it (`npm install -g @salesforce/cli`, then `sf org login web`, then `claude mcp add salesforce -- npx -y @salesforce/mcp`). Do not skip this step.
 1. **Resolve the persistent data directory.** Run the following via `mcp__Control_your_Mac__osascript` (Cowork) or the Bash tool (Claude Code CLI):
    ```bash
    PLUGIN_DATA_DIR=$(cat "$HOME/.claude/aise-assistant.datadir" 2>/dev/null)
@@ -21,8 +21,9 @@ Read the procedure in `agents/assistant-onboarding.md` and execute it inline as 
    Capture the printed `PLUGIN_DATA_DIR` value. Use it as the literal path for **all** file reads and writes in this session. **Never use `$CLAUDE_PLUGIN_DATA` for writing** — it resolves to a volatile temp path, not the persistent directory.
 2. Detect the Notion connection and resolve the current user via `notion-get-users self` → auto-fills `identity.md` with the Notion user ID.
 3. Ask HITL questions covering identity, voice, and workspace preferences in **one combined elicitation form** (call `read_me` with `modules: ["elicitation"]` first, then render a single card — no sequential question-by-question flow). Reserve `AskUserQuestion` only for a single ad-hoc clarification that arises after the form is submitted.
-4. Optionally (`--scrape-voice` or when the user opts in via the form): read 5–10 recent sent emails from Gmail and 5–10 recent Slack messages, distinguishing **internal** vs **client-facing** tone, and draft a `voice.md` from the user's actual writing style. For Slack, read the `slack_search_public_and_private` tool description to find the `Current logged in user's user_id is <ID>` line — use `from:<@USER_ID>` as the query (not the email address).
-5. **Write files to `<PLUGIN_DATA_DIR>/about/`** (the literal path from step 1) — `identity.md`, `voice.md`, `workspace.md`. Create the directory if it doesn't exist. Present `computer://` links to each written file so the user can open them.
+4. Auto-discover the AISE team roster from the Customer Tracker (Step 2.5 in the agent) and present it for confirmation in the combined HITL form.
+5. Optionally (`--scrape-voice` or when the user opts in via the form): read 5–10 recent sent emails from Gmail and 5–10 recent Slack messages, distinguishing **internal** vs **client-facing** tone, and draft a `voice.md` from the user's actual writing style. For Slack, read the `slack_search_public_and_private` tool description to find the `Current logged in user's user_id is <ID>` line — use `from:<@USER_ID>` as the query (not the email address).
+6. **Write files to `<PLUGIN_DATA_DIR>/about/`** (the literal path from step 1) — `identity.md`, `voice.md`, `workspace.md`, `tracker-memory.md`, `team-roster.md`. Create the directory if it doesn't exist. Present `computer://` links to each written file so the user can open them.
 6. Confirm setup in chat. These files live at `<PLUGIN_DATA_DIR>/about/` and persist across plugin updates. They are **deleted on uninstall** and are machine-specific — re-run `/assistant-setup` after a full reinstall or on a new machine.
 
 **Modes (mutually exclusive):**

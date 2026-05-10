@@ -1,5 +1,12 @@
 # Changelog — aise-leadership
 
+## [1.0.2] — 2026-05-10
+
+### Fixed
+- Replace stale `brew install sf-mcp-server` Salesforce install instructions with the correct three-step flow: `npm install -g @salesforce/cli`, `sf org login web`, `claude mcp add salesforce -- npx -y @salesforce/mcp`
+- `setup-connections.sh`: check for `sf` CLI instead of the old binary; mcp.json entry now uses `npx -y @salesforce/mcp`; removed email-lookup block; downgraded missing-CLI from a hard exit to a warning
+- Added a friendly easter egg when Salesforce is already installed
+
 ## [1.0.1] — 2026-05-10
 
 ### Fixed

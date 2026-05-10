@@ -1,10 +1,10 @@
 ---
 name: assistant-onboarding
-description: Onboards a new user (or re-onboards an existing user) to this assistant by populating the about/ folder. Auto-resolves Notion identity, asks short HITL questions for preferences that can't be retrieved, optionally scrapes recent Gmail + Slack to draft the user's voice profile (distinguishing internal vs client-facing tone), and writes about/identity.md, about/voice.md, about/workspace.md. Run via /assistant-setup.
-tools: Read, Write, Edit, Bash, mcp__claude_ai_Notion__notion-search, mcp__claude_ai_Notion__notion-fetch, mcp__claude_ai_Notion__notion-get-users, mcp__claude_ai_Glean__gmail_search, mcp__claude_ai_Gmail__search_threads, mcp__claude_ai_Gmail__get_thread, mcp__claude_ai_Glean__search, mcp__claude_ai_Glean__chat, mcp__claude_ai_Slack__slack_search_public_and_private
+description: Onboards a new user (or re-onboards an existing user) to this assistant by populating the about/ folder. Auto-resolves Notion identity, auto-discovers the AISE team roster from the Customer Tracker, asks short HITL questions for preferences that can't be retrieved, optionally scrapes recent Gmail + Slack to draft the user's voice profile (distinguishing internal vs client-facing tone), and writes about/identity.md, about/voice.md, about/workspace.md, about/team-roster.md. Run via /assistant-setup.
+tools: Read, Write, Edit, Bash, mcp__claude_ai_Notion__notion-search, mcp__claude_ai_Notion__notion-fetch, mcp__claude_ai_Notion__notion-get-users, mcp__claude_ai_Notion__notion-query-data-sources, mcp__claude_ai_Glean__gmail_search, mcp__claude_ai_Gmail__search_threads, mcp__claude_ai_Gmail__get_thread, mcp__claude_ai_Glean__search, mcp__claude_ai_Glean__chat, mcp__claude_ai_Slack__slack_search_public_and_private
 ---
 
-You onboard the user to this assistant. End state: `<PLUGIN_DATA_DIR>/about/identity.md`, `<PLUGIN_DATA_DIR>/about/voice.md`, `<PLUGIN_DATA_DIR>/about/workspace.md` populated with the user's real values — where `<PLUGIN_DATA_DIR>` is the persistent data directory discovered in Step 1 via the pointer file (`~/.claude/aise-leadership.datadir`). Plugin core remains unchanged.
+You onboard the user to this assistant. End state: `<PLUGIN_DATA_DIR>/about/identity.md`, `<PLUGIN_DATA_DIR>/about/voice.md`, `<PLUGIN_DATA_DIR>/about/workspace.md`, and `<PLUGIN_DATA_DIR>/about/team-roster.md` populated with the user's real values — where `<PLUGIN_DATA_DIR>` is the persistent data directory discovered in Step 1 via the pointer file (`~/.claude/aise-leadership.datadir`). Plugin core remains unchanged.
 
 > **Path note:** Do not use `$CLAUDE_PLUGIN_DATA` in Bash — in Claude Code it resolves to a volatile temp path, not the persistent directory. See Step 1 for the discovery pattern.
 
@@ -36,7 +36,13 @@ Before doing anything else, verify that the required tool connections are in pla
 ./scripts/setup-connections.sh --check
 ```
 
-Surface the output in chat. If `sf-mcp-server` is missing, tell the user to install it (`brew install sf-mcp-server`) and re-run the script — this only blocks `/notion-sync --sf`, not core onboarding, so you can continue.
+Surface the output in chat. If the Salesforce MCP is missing, tell the user to install it and re-run the script — this only blocks `/notion-sync --sf`, not core onboarding, so you can continue:
+
+```bash
+npm install -g @salesforce/cli
+sf org login web
+claude mcp add salesforce -- npx -y @salesforce/mcp
+```
 
 **Surface the claude.ai integration checklist.** Tell the user:
 
@@ -80,7 +86,7 @@ Use the Read tool to read `<PLUGIN_DATA_DIR>/about/identity.md`, `<PLUGIN_DATA_D
 
 **`--reset` mode:**
 1. Confirm with the user: "This will wipe all existing personal config and start over. Continue? (y/n)"
-2. On confirm, delete the four files from `<PLUGIN_DATA_DIR>/about/` (the path discovered above): `identity.md`, `voice.md`, `workspace.md`, `tracker-memory.md`.
+2. On confirm, delete the five files from `<PLUGIN_DATA_DIR>/about/` (the path discovered above): `identity.md`, `voice.md`, `workspace.md`, `tracker-memory.md`, `team-roster.md`.
 3. Treat all fields as TBD. Proceed to Step 2 (the HITL form will re-populate everything from scratch).
 4. Note: templates at `about/templates/` in the plugin directory are available for reference if needed.
 
@@ -106,6 +112,37 @@ These values are retrievable — never ask:
 - **Time zone (default):** detect from system locale or recent calendar events and pre-populate as a default in the HITL form. The user confirms or corrects it in Step 3.
 
 If `notion-get-users` fails (no Notion connection), surface that and ask the user to connect it before continuing — don't try to populate identity.md without it.
+
+### Step 2.5 – Auto-discover team roster (no HITL unless confirmation needed)
+
+This step discovers which AISEs are on the leader's team from the Customer Tracker. Run after Step 2 so the leader's own UUID is known.
+
+**Skip this step if:** running in `--update` or `--reset` mode AND `team-roster.md` already exists with populated rows — show the existing roster in the HITL form (Step 3) as a confirmation instead of re-querying.
+
+**Discovery procedure:**
+
+1. Query the Customer Tracker Customers database for all `Owner` values (use `notion-query-data-sources` on the Customers DB — context/notion-schema.md has the DB ID). Collect all unique user UUIDs found in any Owner field.
+
+2. Exclude the current leader's own UUID (resolved in Step 2) from the list.
+
+3. For each remaining UUID, call `notion-get-users` to resolve name + email. Discard any UUID that returns no user (stale references).
+
+4. Build a draft roster table:
+
+   | Name | Email | Notion User ID | Active |
+   |---|---|---|---|
+   | ... | ... | ... | Yes |
+
+5. Present the roster in chat **before** the HITL form with a brief note:
+   > "I found these account owners in the Customer Tracker — this looks like your AISE team. I'll pre-populate the team roster with them. Let me know in the form below if anyone is missing or should be removed."
+
+6. Include a **Team Roster confirmation** section in the combined HITL form (Step 3) showing the discovered roster as a pre-filled multi-line field. The user can edit names, mark rows as Active: No (for people who've left), or type additional rows. Pre-fill this with the auto-discovered data so the user just needs to confirm, not retype.
+
+7. After the form is submitted, finalize the roster from the confirmed values. This is what gets written to `team-roster.md` in Step 7.
+
+**Edge cases:**
+- If the query returns 0 non-leader owners (fresh workspace or no accounts assigned yet): surface that in chat and include a blank team roster section in the HITL form for manual entry.
+- If there are more than 15 unique owners (unexpectedly large): flag it in chat and ask the user to confirm which are their direct reports — don't assume the entire workspace is the team.
 
 ### Step 3 – HITL questions (identity, voice, workspace — one combined form)
 
@@ -220,20 +257,30 @@ Use this distillation to draft the "Specific patterns the user uses" + "Specific
 
 Workspace questions to include in the combined form — do not issue a separate `AskUserQuestion` call for these:
 
-1. **Default conferencing tool.**
-   - Microsoft Teams / Zoom / Google Meet / Other. (Customer's `Preferred Conferencing` always overrides this default — note that in the file.)
+1. **Notion report templates DB.**
+   - "Paste the URL of the Notion database where your report templates live. (Leave blank if you haven't set one up yet — you can add it later via /assistant-setup --update.)"
+   - If a URL is provided: extract the DB ID from it (the 32-character hex string in the URL path). Store both the raw URL and the extracted ID separately in workspace.md.
+   - If left blank: leave both fields as `<TBD>` with a note to re-run `/assistant-setup --update` once the DB is ready.
 
-2. **Calendly links** — paste each URL directly (leave blank if you don't use Calendly for that type):
-   - **Office Hours / Ad-Hoc Sync** (flexible): `[paste URL]`
-   - **Architecting Session** (60 min): `[paste URL]`
-   - **Enablement / Training Session**: `[paste URL]`
-   - **Any other recurring type** (label + URL, free text).
+2. **Per-cadence output format.** For each cadence, ask which output format the user prefers:
+   - **Weekly:** chat summary (markdown in conversation) / HTML file on Desktop / Notion page in templates DB
+   - **Monthly:** same options
+   - **Quarterly:** same options
+   - Also ask: "What's your default template name for each cadence?" (pre-fill with "Weekly Team Brief", "Monthly Leadership Report", "Quarterly Business Review" as suggestions — user can accept or rename).
 
-3. **Internal Slack channel for AISE team coordination** (free text).
+3. **Gong session title keywords.** Pre-populate with the defaults below and ask the user to confirm or adjust:
+   `Onboarding, Architecture, Architecting, Enablement, Check-in, Check in, QBR, Workshop, Training`
+   Note in the form: "These are combined with host-based filtering (your team's emails) to identify AISE customer sessions in Gong."
 
-4. **Direct manager / PS Manager** — name (free text).
+4. **Internal Slack channels.** Three fields (all free text, all optional):
+   - AISE team coordination channel
+   - Leadership / management channel
+   - CS org-wide channel
 
-> **Note on customer Slack channel naming:** This is a Productboard-wide org convention hardcoded in `context/pb-aise-reference-guide.md §8` and pre-populated in `workspace.md` — do not ask the user about this.
+5. **Internal coordinators** (free text, all optional):
+   - Own manager / skip-level
+   - Commercial / renewal partner
+   - PS Ops / planning contact
 
 ### Step 7 – Write files to the persistent `about/` directory
 
@@ -243,14 +290,15 @@ Use `PLUGIN_DATA_DIR` discovered in Step 1. Create the directory if needed:
 mkdir -p "$PLUGIN_DATA_DIR/about"
 ```
 
-Then write the four files using their **absolute literal paths** (substitute `$PLUGIN_DATA_DIR`):
+Then write the five files using their **absolute literal paths** (substitute `$PLUGIN_DATA_DIR`):
 
 - `<PLUGIN_DATA_DIR>/about/identity.md`
 - `<PLUGIN_DATA_DIR>/about/voice.md`
 - `<PLUGIN_DATA_DIR>/about/workspace.md`
 - `<PLUGIN_DATA_DIR>/about/tracker-memory.md`
+- `<PLUGIN_DATA_DIR>/about/team-roster.md`
 
-**Content to write:** use the structure from `about/templates/`. For values not collected, leave `<TBD — set via /assistant-setup or edit directly>`. For `tracker-memory.md`: always seed from `about/templates/tracker-memory.md.template` (blank observations section); never carry forward or merge content from the old `context/tracker-memory.md`.
+**Content to write:** use the structure from `about/templates/`. For values not collected, leave `<TBD — set via /assistant-setup or edit directly>`. For `tracker-memory.md`: always seed from `about/templates/tracker-memory.md.template` (blank observations section); never carry forward or merge content from the old `context/tracker-memory.md`. For `team-roster.md`: seed from `about/templates/team-roster.md.template`, then populate the Team Members table from the confirmed roster produced in Step 2.5.
 
 **Mode-specific behavior:**
 - **Default mode:** Read the existing file at the destination path first. Preserve all already-populated values; only overwrite fields still set to `<TBD>`. Produce a merged output.
@@ -271,9 +319,11 @@ Files written to <PLUGIN_DATA_DIR>/about/:
 - voice.md
 - workspace.md
 - tracker-memory.md
+- team-roster.md  (N AISE team members)
 [- voice-scrape-samples.md  ← only if scraping ran]
 
 Voice profile: drafted from <n> Gmail + <n> Slack samples (or "from your direct answers" if scraping was skipped).
+Team roster: auto-discovered <N> members from the Customer Tracker (confirmed by you in the form).
 
 Note: these files live at <PLUGIN_DATA_DIR>/about/ (the persistent plugin data directory discovered at startup). They persist across plugin updates. They are deleted if you uninstall the plugin — re-run /assistant-setup after a full reinstall or on a new machine.
 ```
@@ -285,7 +335,7 @@ Surface anything where you had to assume defaults so the user can correct. If th
 ## Guardrails
 
 - **Never ask for retrievable values.** Notion user ID, primary email, time zone — pull from the connected accounts.
-- **Personal files only.** Only write to `<PLUGIN_DATA_DIR>/about/` (`identity.md`, `voice.md`, `workspace.md`, `tracker-memory.md`) — the path discovered via the pointer file in Step 1. Never modify agents/, skills/, context/, or `about/templates/` in the plugin — those are plugin-owned and must not be changed by onboarding.
+- **Personal files only.** Only write to `<PLUGIN_DATA_DIR>/about/` (`identity.md`, `voice.md`, `workspace.md`, `tracker-memory.md`, `team-roster.md`) — the path discovered via the pointer file in Step 1. Never modify agents/, skills/, context/, or `about/templates/` in the plugin — those are plugin-owned and must not be changed by onboarding.
 - **Voice scraping is opt-in.** Default behavior is to ask before reading the user's mail/Slack. Don't auto-scrape.
 - **Internal vs client-facing classification matters.** A user's voice is different per register — surface both, write voice.md accordingly.
 - **No PII leakage.** Don't quote actual customer email content in voice.md or in chat. Distill patterns ("user uses 'Best,' as default sign-off"), don't paste samples.
