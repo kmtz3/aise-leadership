@@ -1,0 +1,10 @@
+about/identity.md
+about/voice.md
+about/workspace.md
+about/tracker-memory.md
+about/voice-scrape-samples.md
+*.plugin
+.DS_Store
+.claude/
+diagrams/
+memory/
